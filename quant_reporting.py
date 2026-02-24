@@ -5,136 +5,133 @@ import seaborn as sns
 
 class QuantReporter:
     """
-    Módulo de Analítica y Visualización para resultados del QuantEngineV2.
+    Módulo de Analítica Estándar para el sistema de trading.
+    Cumple con el CONTRATO DE INTERFAZ DE DATOS V1.3.
+    Requiere: ['date', 'side', 'pnl_r', 'pnl_usd', 'exit_time']
     """
     def __init__(self, trades_df):
-        if trades_df.empty:
-            print("⚠️ No hay trades para analizar.")
+        if trades_df is None or trades_df.empty:
+            print("⚠️ Datos de trades vacíos o nulos.")
             self.df = pd.DataFrame()
-        else:
-            self.df = trades_df.copy()
-            self._prepare_data()
+            return
 
-    def _prepare_data(self):
-        """Calcula métricas acumulativas para reporting."""
+        # 1. Validación del Contrato de Datos (Estandarización)
+        required_cols = ['date', 'side', 'pnl_r', 'pnl_usd']
+        missing = [c for c in required_cols if c not in trades_df.columns]
+        if missing:
+            raise ValueError(f"Faltan columnas obligatorias en el contrato: {missing}")
+
+        self.df = trades_df.copy()
+        self.df['date'] = pd.to_datetime(self.df['date'])
+        
+        # 2. Preparación de métricas acumuladas
+        self._prepare_metrics()
+
+    def _prepare_metrics(self):
+        """Cálculos base de rendimiento y curvas de equidad."""
+        # Ordenar por tiempo de salida para coherencia en la curva
+        sort_col = 'exit_time' if 'exit_time' in self.df.columns else 'date'
+        self.df = self.df.sort_values(sort_col)
+        
         self.df['equity_r'] = self.df['pnl_r'].cumsum()
-        self.df['equity_usd'] = self.df['pnl_usd'].cumsum()
         self.df['peak_r'] = self.df['equity_r'].cummax()
         self.df['drawdown_r'] = self.df['equity_r'] - self.df['peak_r']
 
-    def get_summary_stats(self):
-        """Genera un reporte detallado con métricas de robustez."""
-        if self.df.empty: return pd.Series({})
-        
-        total_trades = len(self.df)
-        wins = self.df[self.df['pnl_r'] > 0.1]
-        losses = self.df[self.df['pnl_r'] < -0.1]
-        
-        total_pnl_r = self.df['pnl_r'].sum()
-        max_dd_r = abs(self.df['drawdown_r'].min())
-        
-        # Nuevas Métricas
-        recovery_factor = total_pnl_r / max_dd_r if max_dd_r != 0 else np.inf
-        # Sharpe Ratio simplificado: Retorno promedio / Desviación estándar del retorno
-        sharpe_r = self.df['pnl_r'].mean() / self.df['pnl_r'].std() if self.df['pnl_r'].std() != 0 else 0
+    # --- IMPLEMENTACIÓN DEL CONTRATO V1.3 ---
 
-        stats = {
-            "Total Trades": total_trades,
-            "Win Rate (%)": (len(wins) / total_trades) * 100,
-            "Expectancy (R)": self.df['pnl_r'].mean(),
-            "Profit Factor (R)": abs(self.df[self.df['pnl_r'] > 0]['pnl_r'].sum() / 
-                                     self.df[self.df['pnl_r'] < 0]['pnl_r'].sum()) if any(self.df['pnl_r'] < 0) else np.inf,
-            "Max Drawdown (R)": -max_dd_r,
-            "Recovery Factor": recovery_factor,
-            "Sharpe Ratio (R)": sharpe_r,
-            "Total PnL (R)": total_pnl_r,
-            "Total PnL (USD)": self.df['pnl_usd'].sum(),
-            "Avg Trade (USD)": self.df['pnl_usd'].mean()
-        }
-        return pd.Series(stats)
+    def get_summary_stats(self):
+        """Imprime métricas clave (WR%, PF, PnL Total)."""
+        if self.df.empty: return
+        
+        wins = self.df[self.df['pnl_r'] > 0]
+        total = len(self.df)
+        pnl_r = self.df['pnl_r'].sum()
+        pnl_usd = self.df['pnl_usd'].sum()
+        
+        loss_df = self.df[self.df['pnl_r'] < 0]
+        total_loss = abs(loss_df['pnl_r'].sum())
+        pf = (wins['pnl_r'].sum() / total_loss) if total_loss > 0 else np.inf
+
+        print("\n" + "="*50)
+        print("📊 RESUMEN DE MÉTRICAS CLAVE")
+        print("="*50)
+        print(f"{'Total Trades':<25}: {total}")
+        print(f"{'Win Rate':<25}: {(len(wins)/total)*100:>10.2f}%")
+        print(f"{'Profit Factor':<25}: {pf:>10.2f}")
+        print(f"{'Total PnL (R)':<25}: {pnl_r:>10.2f}R")
+        print(f"{'Total PnL (USD)':<25}: ${pnl_usd:>9.2f}")
+        print(f"{'Max Drawdown (R)':<25}: {self.df['drawdown_r'].min():>10.2f}R")
+        print("="*50)
+
+    def print_report(self):
+        """Muestra el informe general detallado (Desglose por Side/Día)."""
+        print("\n📈 INFORME DETALLADO POR DIRECCIÓN Y DÍA:")
+        
+        df_stats = self.df.copy()
+        df_stats['day_name'] = df_stats['date'].dt.day_name()
+        
+        def _calc_stats(g):
+            wins = g[g['pnl_r'] > 0]
+            return pd.Series({
+                'Trades': int(len(g)),
+                'WR%': (len(wins) / len(g)) * 100,
+                'PnL(R)': g['pnl_r'].sum(),
+                'PnL(USD)': g['pnl_usd'].sum()
+            })
+
+        breakdown = df_stats.groupby(['day_name', 'side'], group_keys=False).apply(_calc_stats, include_groups=False).reset_index()
+        
+        # Ordenar días de la semana
+        order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        breakdown['day_name'] = pd.Categorical(breakdown['day_name'], categories=order, ordered=True)
+        breakdown = breakdown.sort_values(['day_name', 'side'])
+        
+        print("-" * 75)
+        print(breakdown.to_string(index=False))
+        print("-" * 75)
+
+    def print_annual_summary(self):
+        """Desglose de rendimiento por año calendario."""
+        print("\n📅 RESUMEN ANUAL DE RENDIMIENTO:")
+        df_ann = self.df.copy()
+        df_ann['year'] = df_ann['date'].dt.year
+        
+        def _annual(x):
+            return pd.Series({
+                'Trades': int(len(x)),
+                'PnL (R)': x['pnl_r'].sum(),
+                'PnL (USD)': x['pnl_usd'].sum(),
+                'MaxDD (R)': (x['pnl_r'].cumsum() - x['pnl_r'].cumsum().cummax()).min()
+            })
+
+        summary = df_ann.groupby('year').apply(_annual, include_groups=False).reset_index()
+        print(summary.to_string(index=False))
 
     def plot_equity_curve(self):
-        """Dibuja la curva de capital y el drawdown."""
+        """Genera gráfico de curva de capital y DD."""
         if self.df.empty: return
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), sharex=True, 
                                        gridspec_kw={'height_ratios': [3, 1]})
         
         # Curva de Equity
-        ax1.plot(self.df.index, self.df['equity_r'], label='Equity Acumulada (R)', color='#2ecc71', lw=2)
-        ax1.fill_between(self.df.index, self.df['equity_r'], alpha=0.1, color='#2ecc71')
-        ax1.set_title("Curva de Rendimiento (Múltiplos de R)", fontsize=14, fontweight='bold')
-        ax1.set_ylabel("R")
+        ax1.plot(self.df['equity_r'].values, color='#1a5fb4', lw=2, label="Equity (R)")
+        ax1.set_title("Curva de Equity Acumulada (Unidades R)", fontsize=14)
         ax1.grid(True, alpha=0.3)
         ax1.legend()
-
-        # Drawdown
-        ax2.fill_between(self.df.index, self.df['drawdown_r'], 0, color='#e74c3c', alpha=0.3, label='Drawdown (R)')
-        ax2.set_ylabel("DD (R)")
-        ax2.set_xlabel("Número de Trades")
+        
+        # Underwater Chart
+        ax2.fill_between(range(len(self.df)), 0, self.df['drawdown_r'], color='#e01b24', alpha=0.3)
+        ax2.plot(self.df['drawdown_r'].values, color='#e01b24', lw=1)
+        ax2.set_title("Gráfico de Drawdown (Underwater R)", fontsize=12)
         ax2.grid(True, alpha=0.3)
         
         plt.tight_layout()
         plt.show()
 
-    def plot_monthly_analysis(self):
-        """Análisis de rentabilidad por mes."""
-        if self.df.empty: return
-        
-        self.df['date'] = pd.to_datetime(self.df['date'])
-        self.df['Year'] = self.df['date'].dt.year
-        self.df['Month'] = self.df['date'].dt.month
-        
-        pivot = self.df.pivot_table(index='Year', columns='Month', values='pnl_r', aggfunc='sum').fillna(0)
-        
-        plt.figure(figsize=(12, 6))
-        sns.heatmap(pivot, annot=True, fmt=".1f", cmap="RdYlGn", center=0)
-        plt.title("Mapa de Calor de Retornos Mensuales (R)")
-        plt.show()
-
-    def print_report(self):
-        """Imprime un reporte formateado en consola."""
-        stats = self.get_summary_stats()
-        print("\n" + "="*40)
-        print("       INFORME DE RENDIMIENTO QUANT")
-        print("="*40)
-        for k, v in stats.items():
-            print(f"{k:<20}: {v:>10.2f}")
-        print("="*40)
-    def print_annual_summary(self):
-        """Genera una tabla comparativa de rendimiento año tras año."""
-        # Usamos self.df que es el nombre correcto del atributo en esta clase
-        if self.df is None or self.df.empty:
-            print("No hay datos suficientes para el informe anual.")
-            return
-
-        df_t = self.df.copy()
-        
-        # Intentamos usar 'entry_time', si no existe usamos 'date'
-        date_col = 'entry_time' if 'entry_time' in df_t.columns else 'date'
-        df_t[date_col] = pd.to_datetime(df_t[date_col])
-        df_t['year'] = df_t[date_col].dt.year
-
-        # Agrupación por año
-        annual = df_t.groupby('year').apply(lambda x: pd.Series({
-            'Trades': len(x),
-            'WinRate': (x['pnl_r'] > 0).mean() * 100,
-            'PnL_R': x['pnl_r'].sum(),
-            'PnL_USD': x['pnl_usd'].sum(),
-            'PF': abs(x[x['pnl_r'] > 0]['pnl_r'].sum() / x[x['pnl_r'] < 0]['pnl_r'].sum()) if any(x['pnl_r'] < 0) else np.inf,
-            'MaxDD_R': self._calculate_max_dd(x['pnl_r'])
-        }), include_groups=False)
-
-        print("\n" + "="*75)
-        print(f"{'AÑO':<6} | {'TRADES':<6} | {'WR %':<8} | {'PnL (R)':<10} | {'PnL (USD)':<12} | {'PF':<6} | {'DD (R)':<6}")
-        print("-" * 75)
-        
-        for year, row in annual.iterrows():
-            print(f"{int(year):<6} | {int(row['Trades']):<6} | {row['WinRate']:>6.1f}% | {row['PnL_R']:>8.2f}R | ${row['PnL_USD']:>10.2f} | {row['PF']:>5.2f} | {row['MaxDD_R']:>6.2f}")
-        print("="*75)
-    def _calculate_max_dd(self, pnl_series):
-        """Cálculo auxiliar de Max Drawdown en R."""
-        cum_pnl = pnl_series.cumsum()
-        peak = cum_pnl.expanding().max()
-        dd = cum_pnl - peak
-        return dd.min()
+    def generate_full_report(self):
+        """Ejecuta el análisis integral (incluye todos los reportes)."""
+        self.get_summary_stats()
+        self.print_report()
+        self.print_annual_summary()
+        self.plot_equity_curve()
