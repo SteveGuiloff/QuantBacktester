@@ -1,3 +1,41 @@
+# =============================================================================
+# CONTRATO DE INTERFAZ DE DATOS - ESTRATEGIA | MOTOR | REPORTER
+# =============================================================================
+# Versión: 1.1 (Estándar de Dirección: 'side')
+#
+# 1. ENTRADA AL MOTOR (Desde la Estrategia)
+# El DataFrame 'df_signals' debe estar normalizado con estos nombres exactos:
+# -----------------------------------------------------------------------------
+# | Columna          | Tipo      | Descripción                                |
+# |------------------|-----------|--------------------------------------------|
+# | Timestamp_NY     | datetime  | Índice temporal (Zona horaria New York).   |
+# | Open             | float     | Precio apertura (Ajustado o Crudo).        |
+# | High             | float     | Precio máximo (Ajustado o Crudo).          |
+# | Low              | float     | Precio mínimo (Ajustado o Crudo).           |
+# | Close            | float     | Precio cierre (Ajustado o Crudo).          |
+# | sig_long         | boolean   | Disparador de compra (True/False).         |
+# | sig_short        | boolean   | Disparador de venta (True/False).          |
+# | sl_level         | float     | Nivel de precio para el Stop Loss.         |
+# | tp_level         | float     | Nivel de precio para el Take Profit.       |
+#
+# 2. SALIDA DEL MOTOR / ENTRADA AL REPORTER (Resultado del Backtest)
+# El DataFrame 'trades_df' generado por engine.run() contiene:
+# -----------------------------------------------------------------------------
+# | Columna          | Tipo      | Descripción                                |
+# |------------------|-----------|--------------------------------------------|
+# | id               | int       | Identificador único del trade.             |
+# | date             | date      | Fecha de cierre (YYYY-MM-DD).              |
+# | entry_time       | datetime  | Timestamp exacto de entrada.               |
+# | exit_time        | datetime  | Timestamp exacto de salida.                |
+# | side             | string    | Dirección normalizada: "Long" o "Short".   |
+# | qty              | int       | Cantidad de contratos operados.            |
+# | entry            | float     | Precio de ejecución de entrada.            |
+# | exit             | float     | Precio de ejecución de salida.             |
+# | pnl_usd          | float     | Resultado neto en dólares (c/ comisiones). |
+# | pnl_r            | float     | Resultado en unidades de Riesgo (R).       |
+# | reason           | string    | Motivo: "TP", "SL" o "ForceClose".         |
+# =============================================================================
+
 import pandas as pd
 import numpy as np
 import pandas_ta as ta
